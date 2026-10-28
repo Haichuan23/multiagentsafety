@@ -1,0 +1,11 @@
+benchmark,condition,score,audit_k,rollback_k,total_k
+bbh,rho02_bra,0.760,0.74,2.84,6.90
+bbh,rho04_random,0.820,2.14,1.76,8.01
+bbh,rho04_bra,0.860,2.09,1.81,8.18
+bbh,rho06_bra,0.873,3.91,1.35,9.57
+bbh,rho10_bra,0.893,5.57,0.94,11.31
+research,rho02_bra,0.757,2.24,13.14,33.2
+research,rho04_random,0.821,5.43,9.13,37.4
+research,rho04_bra,0.902,5.82,9.38,38.5
+research,rho06_bra,0.906,9.11,7.17,42.9
+research,rho10_bra,0.897,11.13,5.64,46.8

@@ -1,0 +1,22 @@
+default_model: fixture
+models:
+  fixture: {backend: mock, model: offline-fixture}
+experiment:
+  agents: 5
+  rounds: 2
+  topology: layered
+  malicious_fraction: 0.2
+  max_tokens: 64
+  audit_max_tokens: 64
+  max_recovery_attempts: 2
+  temperature: 0
+  seeds: [42]
+data:
+  bbh: data/smoke_bbh.jsonl
+  research: data/smoke_research.jsonl
+conditions:
+  - {name: rho02_bra, ratio: 0.2, strategy: bra}
+  - {name: rho04_random, ratio: 0.4, strategy: random}
+  - {name: rho04_bra, ratio: 0.4, strategy: bra}
+  - {name: rho06_bra, ratio: 0.6, strategy: bra}
+  - {name: rho10_bra, ratio: 1.0, strategy: bra}

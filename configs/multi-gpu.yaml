@@ -1,0 +1,45 @@
+# Example: two independently downloaded models on separate allocated GPUs.
+# Start with CUDA_VISIBLE_DEVICES=0,1 on a GPU compute node.
+default_model: worker
+models:
+  worker:
+    backend: hf
+    model: Qwen/Qwen3-4B-Instruct-2507
+    device_map: {"": 0}
+    dtype: bfloat16
+    max_context: 32768
+  reviewer:
+    backend: hf
+    model: Qwen/Qwen3-8B
+    device_map: {"": 1}
+    dtype: bfloat16
+    max_context: 32768
+    chat_template_kwargs: {enable_thinking: false}
+routes:
+  agent_0: worker
+  agent_1: worker
+  agent_2: worker
+  agent_3: worker
+  agent_4: worker
+  auditor: reviewer
+  judge: reviewer
+experiment:
+  agents: 5
+  rounds: 3
+  topology: chain
+  malicious_fraction: 0.2
+  max_tokens: 768
+  audit_max_tokens: 512
+  judge_max_tokens: 512
+  max_recovery_attempts: 2
+  temperature: 0
+  seeds: [42, 43, 44]
+data:
+  bbh: data/bbh150.jsonl
+  research: data/research100.jsonl
+conditions:
+  - {name: rho02_bra, ratio: 0.2, strategy: bra}
+  - {name: rho04_random, ratio: 0.4, strategy: random}
+  - {name: rho04_bra, ratio: 0.4, strategy: bra}
+  - {name: rho06_bra, ratio: 0.6, strategy: bra}
+  - {name: rho10_bra, ratio: 1.0, strategy: bra}

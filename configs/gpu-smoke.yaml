@@ -1,0 +1,22 @@
+default_model: small
+models:
+  small:
+    backend: hf
+    model: Qwen/Qwen3-0.6B
+    device_map: auto
+    dtype: bfloat16
+    max_context: 32768
+    chat_template_kwargs: {enable_thinking: false}
+experiment:
+  agents: 5
+  rounds: 1
+  topology: chain
+  malicious_fraction: 0.2
+  max_tokens: 128
+  audit_max_tokens: 128
+  max_recovery_attempts: 1
+  seeds: [42]
+data:
+  bbh: data/bbh150.jsonl
+conditions:
+  - {name: rho04_bra, ratio: 0.4, strategy: bra}

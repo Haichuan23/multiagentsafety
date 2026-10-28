@@ -1,0 +1,36 @@
+# Default CLI limit is ONE example/benchmark. --limit 0 explicitly selects all.
+default_model: qwen
+models:
+  qwen:
+    backend: api
+    model: Qwen/Qwen3-235B-A22B-Instruct-2507
+    base_url: https://YOUR-PROVIDER/v1
+    api_key_env: BRA_API_KEY
+    require_key: true
+    token_parameter: max_tokens
+    timeout: 180
+    retries: 3
+# Any role can use a distinct named model/server, including local HF models.
+routes:
+  auditor: qwen
+  judge: qwen
+experiment:
+  agents: 5
+  rounds: 3
+  topology: chain
+  malicious_fraction: 0.2
+  max_tokens: 768
+  audit_max_tokens: 512
+  judge_max_tokens: 512
+  max_recovery_attempts: 2
+  temperature: 0
+  seeds: [42, 43, 44]
+data:
+  bbh: data/bbh150.jsonl
+  research: data/research100.jsonl
+conditions:
+  - {name: rho02_bra, ratio: 0.2, strategy: bra}
+  - {name: rho04_random, ratio: 0.4, strategy: random}
+  - {name: rho04_bra, ratio: 0.4, strategy: bra}
+  - {name: rho06_bra, ratio: 0.6, strategy: bra}
+  - {name: rho10_bra, ratio: 1.0, strategy: bra}

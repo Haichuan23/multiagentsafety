@@ -1,0 +1,42 @@
+# Practical smaller backbone. This does NOT match the paper's 235B backbone.
+# Both distinct models stay resident; device_map controls GPU placement.
+default_model: workers
+models:
+  workers:
+    backend: hf
+    model: Qwen/Qwen3-4B-Instruct-2507
+    revision: main
+    device_map: auto
+    dtype: bfloat16
+    max_context: 32768
+  reviewer:
+    backend: hf
+    model: Qwen/Qwen3-4B-Instruct-2507
+    revision: main
+    device_map: auto
+    dtype: bfloat16
+    max_context: 32768
+# Identical specs share weights. Set a different model or device_map to load a second copy.
+routes:
+  auditor: reviewer
+  judge: reviewer
+experiment:
+  agents: 5
+  rounds: 3
+  topology: chain
+  malicious_fraction: 0.2
+  max_tokens: 768
+  audit_max_tokens: 512
+  judge_max_tokens: 512
+  max_recovery_attempts: 2
+  temperature: 0
+  seeds: [42, 43, 44]
+data:
+  bbh: data/bbh150.jsonl
+  research: data/research100.jsonl
+conditions:
+  - {name: rho02_bra, ratio: 0.2, strategy: bra}
+  - {name: rho04_random, ratio: 0.4, strategy: random}
+  - {name: rho04_bra, ratio: 0.4, strategy: bra}
+  - {name: rho06_bra, ratio: 0.6, strategy: bra}
+  - {name: rho10_bra, ratio: 1.0, strategy: bra}

@@ -1,0 +1,548 @@
+                                             BRA-Audit: Budgeted Runtime Auditing for LLM Multi-Agent Systems via
+                                                          Cumulative-Exposure Audit-Point Placement
+
+                                                                               Kaixiang Wang, Yidan Lin, Jiong Lou, Jie Li
+
+
+
+
+                                                                    Abstract
+                                          LLM-based multi-agent systems (LLM-MAS) solve complex
+                                          tasks through specialized collaboration, but inter-agent de-
+                                          pendencies can propagate hallucinated or malicious outputs
+                                          into system-level failures. Auditor agents mitigate these risks,
+                                                                                                                                                                (
+                                                                                                                                                   (
+                                          yet existing strategies face an e!ciency dilemma: end-only
+arXiv:2608.14668v1 [cs.MA] 2 Aug 2026
+
+
+
+
+                                          auditing reviews long trajectories and final outputs, poten-
+                                          tially weakening audit e"ectiveness and enlarging rollback                                           (
+
+                                          scope, while auditing every agent each round improves de-                                (
+                                          tection and localization at high token cost. How can guard
+                                          performance be preserved while minimizing token cost? To           )
+                                          address this problem, we propose BRA-Audit, a budget-aware
+                                          runtime auditing framework that models MAS execution as a
+                                          dynamic dependency graph and formulates audit scheduling
+                                          as audit-point placement under a fixed audit-call budget to                       (
+
+                                          minimize cumulative unchecked exposure. Its greedy sched-
+                                          uler prioritizes influential and long-unaudited regions, while                                       (
+                                          trusted audit points enable localized recovery. Across struc-
+                                          tured coordination, complex reasoning, and open-ended tasks,
+                                          BRA-Audit restores performance close to the clean setting,         Figure 1: The performance-cost trade-o" of BRA-Audit
+                                          remains competitive with heavy guard methods and reduces           against other methods under attack in AgentsNet benchmark.
+                                          end-to-end token consumption by 17.2%–40.6%.
+
+
+                                                                Introduction                                 malicious intent (Triedman, Jha, and Shmatikov 2025; Wang
+                                        LLM-based multi-agent systems (LLM-MAS) coordinate                   et al. 2025a; Xie et al. 2025). Because agents repeatedly con-
+                                        specialized agents through explicit roles, communication,            sume one another’s outputs, a local error may evolve into
+                                        and shared workflows (Hong et al. 2024; Qian et al. 2024;            a system-level failure, while its origin becomes di!cult to
+                                        Chan et al. 2024). Recent systems demonstrate that MAS               identify in long and tightly coupled trajectories (Xia et al.
+                                        can support generalist task execution, diverse coordination          2026; Zheng et al. 2025).
+                                        protocols, multi-agent reflection, and layered response ag-             Past safeguards detect unreliable behavior through self-
+                                        gregation (Fourney et al. 2024; Zhu et al. 2025; Wang et al.         reflection or graph-based anomaly detection. However, self-
+                                        2024). Other studies optimize communication graphs and               reflection may reproduce the generator’s failure modes, while
+                                        architecture selection to remove redundant exchanges and             GNN-based detectors often rely on labeled attacks and gener-
+                                        adapt computation to task di!culty (Zhang et al. 2024; Li            alize poorly (Shinn et al. 2023; Renze and Guven 2024; Wang
+                                        et al. 2024; Guo et al. 2024). These advances suggest that           et al. 2025b; Miao et al. 2026). Dedicated auditor agents have
+                                        LLM-MAS can combine task decomposition, heterogeneous                therefore become a common alternative, providing stronger
+                                        expertise, tool use, and multiple reasoning paths, making            and more transferable oversight through runtime inspection
+                                        them promising for long-horizon and complex open-ended               and cross-agent reasoning (Xiang et al. 2024; Wang et al.
+                                        tasks (Tran et al. 2025; Yan et al. 2026; Li et al. 2023).           2026; Fan and Li 2025; Du et al. 2024). Nevertheless, existing
+                                           However, multi-agent coordination also expands the fail-          studies mainly improve how auditing is performed, with lim-
+                                        ure surface. Hallucinated or malicious messages can be               ited attention to when and where auditors should be invoked.
+                                        reused as context, alter downstream decisions, and propagate         End-only auditing examines the full execution trajectory and
+                                        across agents (Lee and Tiwari 2024; Ju et al. 2024; He et al.        final result after task completion. Its long, dependency-dense
+                                        2025). Recent attacks can manipulate exchanged messages,             context can obscure failure sources, weaken audit e"ective-
+                                        hijack execution control, leak system information, or conceal        ness, delay intervention, and increase rollback costs (Liu
+et al. 2024; Yang et al. 2026). In contrast, interaction-level   reuse intermediate outputs, allowing local errors to esca-
+auditing, as exemplified by PeerGuard (Fan and Li 2025),         late into system-level failures. Systematic analysis identi-
+inspects agents at each round and enables earlier detection      fies failures in system design, inter-agent alignment, and
+and finer localization. However, repeated auditor calls in-      task verification, revealing collaboration-specific risks be-
+cur substantial token costs and waste computation on benign      yond isolated agents (Cemri et al. 2025). Adversaries can
+interactions (Du et al. 2024). This raises a significant ques-   exploit the same dependencies: malicious instructions can
+tion: how can we determine when and where to audit while         self-propagate across agents (Lee and Tiwari 2024), manipu-
+preserving guard performance and minimizing token cost?          lated knowledge can spread through conversations and persist
+   To answer this question, we propose BRA-Audit, a budget-      in shared retrieval memories (Ju et al. 2024), and communi-
+aware runtime framework that directs limited audit resources     cation attacks can intercept or modify inter-agent messages
+to critical points in LLM-MAS execution. BRA models              without compromising individual agents (He et al. 2025).
+inter-agent communication and execution dependencies as          More severe control-flow hijacking can invoke unsafe tools,
+a dynamic graph, where nodes represent runtime outputs           exfiltrate sensitive data, or execute malicious code (Tried-
+and edges capture information flow. It then formulates audit     man, Jha, and Shmatikov 2025). Overall, communication,
+scheduling as an audit-point placement problem that mini-        shared memory, and orchestration amplify benign errors and
+mizes cumulative unchecked exposure under a fixed budget.        adversarial inputs, making early detection and containment
+The scheduler combines audit gaps with topological influ-        essential for reliable LLM-MAS.
+ence, prioritizing regions that have remained unchecked and
+can strongly a"ect downstream computation. Each verified         LLM Multi-Agent Safeguarding. Early guards use
+audit point becomes a trusted audit point in this round; when    prompt-based self-reflection, but the reviewer may share the
+unsafe behavior is detected, BRA contains the a"ected re-        generator’s failure modes (Shinn et al. 2023; Renze and
+gion and rolls back only the necessary subtrajectory. By in-     Guven 2024). G-Safeguard applies a graph neural network
+tegrating topology-aware scheduling, bounded auditing, and       to communication graphs to detect anomalous agents and
+localized recovery, BRA maintains e"ective runtime over-         prune risky links, yet relies on labeled attacks and may gen-
+sight while reducing redundant checks and re-execution. It       eralize poorly to unseen threats (Wang et al. 2025b; Miao
+therefore achieves an empirical trade-o" between audit per-      et al. 2026). More reliable approaches introduce LLM au-
+formance and token consumption.                                  ditors. GuardAgent converts safety requirements into exe-
+   Further experimental results show that: across MAS col-       cutable checks, TrinityGuard coordinates runtime monitors,
+laboration environments and complex open-ended tasks,            PeerGuard uses mutual reasoning, and multi-agent debate
+BRA-Audit restores task performance close to clean base-         performs iterative cross-examination (Xiang et al. 2024;
+lines while remaining competitive with stronger auditing         Wang et al. 2026; Fan and Li 2025; Du et al. 2024). These
+baselines. It reduces token consumption by 17.2%–40.6%           methods improve oversight, but their e"ectiveness and cost
+compared with heavy guard like PeerGuard and Multi-Agent         vary on complex tasks.
+Debate, demonstrating a favorable trade-o" between defense          These safeguards methods either inspect trajectories too
+e"ectiveness and token cost (as shown in Fig. 1).                coarsely, which weakens detection and enlarges the rollback
+   Our contributions are as follows:                             scope, or audit every interaction, which incurs substantial
+                                                                 token and latency costs. We therefore propose BRA-Audit, a
+  • To determine when and where to audit an LLM-MAS              budgeted audit-point placement framework that preserves ef-
+    while minimizing cost without compromising audit ef-         fective trajectory auditing while reducing redundant checks.
+    fectiveness, we formulate budget-constrained auditing
+    as an audit-point placement problem over dynamic ex-                               System Model
+    ecution graphs.
+                                                                 This section defines the LLM-MAS execution model and the
+  • We propose BRA-Audit, an online budgeted audit-point
+                                                                 threat model considered in this work.
+    placement framework in LLM-MAS that sequentially
+    selects audit points by marginal cumulative-exposure
+                                                                 MAS System
+    reduction. It combines audit gaps and downstream de-
+    pendency reachability to weight unchecked exposure,          We consider a graph-structured LLM multi-agent system
+    while verified audit points bound audit contexts and         (LLM-MAS) with a set of agents
+    localize rollback.
+                                                                                      A = {a1 , . . . , an }.               (1)
+  • We conduct extensive experiments in MAS collabo-
+    ration environments and complex open-ended tasks.            Each agent has a predefined role and contributes to the task
+    BRA-Audit achieves competitive recovery performance          through its own interaction pattern, information sources, and
+    while reducing token consumption by 17.2%–40.6%              tools. We represent runtime execution as a dynamic depen-
+    compared with strong auditing baselines, demonstrat-         dency graph:
+    ing a favorable empirical Pareto trade-o".                                          Gt = (Vt , Et ).                    (2)
+                                                                 Each node v → Vt represents a runtime object, such as an
+                     Related Work                                agent message, intermediate result, tool interaction, retrieved
+Attacks and Failures in LLM-MAS. LLM-based multi-                evidence, or aggregation result. It is associated with its pro-
+agent systems are vulnerable because agents exchange and         ducing agent a(v), timestamp t(v), and content m(v). A
+           1. Dynamic Graph & Exposure Estimation                        2. Budgeted Audit-point Placement                       3. Local Audit & Recovery
+                                                                                                       min 6 2(
+                                  !! = #! , %!                                         Greedy                                                  A!
+                         A!                                                           selection
+                                                                                                       2( ≤ 4(
+                                                                                         A!                                         A"                A#
+               A"               A#
+                                            "( # = AuditGap( #                                    A#                        A$
+                                                                                 A"                                                           A%        A&
+                                              ×TopoImpact ( #                                                                                                     Audit point-
+         A$            A%              A&
+                                                                                                                                                                 bounded audit
+                                                  Broad down-             A$                            A&
+                                                                                         A%                                                   A'                   trajectory
+                                                  stream impact
+                       A'                          Long un-
+                                                  audited gap                                                                     Trusted             Unsafe         Local
+                                                                                         A'
+                    Information Flow                                                                     Audit point             auditpoint         trajectory      rollback
+
+
+                                                                  Figure 2: Overview of BRA-audit.
+
+
+directed edge (u, v) → Et indicates that v depends on u                                       Problem Formulation and Optimization Objective
+through communication, evidence usage, tool execution, or                                     LLM-based auditors can inspect intermediate MAS outputs
+aggregation. A path in Gt therefore captures the propagation                                  and identify hallucinated, inconsistent, or unsafe reasoning
+of information and potential errors.                                                          steps (Zheng et al. 2023; Gu et al. 2025). As discussed in the
+   Auditing is modeled as audit-point placement on the ex-                                    introduction, final-only auditing requires processing a long
+ecution graph. An audit point is a selected node s → Vt                                       execution trajectory and may cause large rollback, whereas
+inspected by an auditor using the relevant context between                                    auditing every interaction requires frequent auditor calls. We
+the previous audit point and s. If the trajectory is safe, s                                  therefore study how to allocate a limited audit budget during
+becomes a trusted audit point in this round. Otherwise, the                                   MAS execution.
+system may block, sanitize, isolate, or roll back the a"ected                                    A successful audit verifies the audit point-bounded depen-
+trajectory.                                                                                   dency region reaching the inspected node and establishes the
+                                                                                              node as a trusted audit point in this round for subsequent ex-
+Threat Model                                                                                  ecution. The size of this region determines both the context
+Unsafe behavior may arise from compromised agents, hallu-                                     inspected by the auditor and the execution scope that may
+cinations, tool errors, poisoned knowledge bases, corrupted                                   need to be rolled back. Audit-point placement is therefore
+websites, or misleading retrieved documents. Despite their                                    important: leaving a node with broad downstream reacha-
+di"erent causes, these failures introduce false, unsafe, or                                   bility unchecked can repeatedly carry its exposure into later
+misleading information into the execution graph.                                              audit contexts, while a long audit gap indicates stale trust evi-
+   We use malicious agents as a unified abstraction for these                                 dence for the corresponding agent or region. Moreover, audit
+cases. Let                                                                                    point decisions are coupled because each new audit point
+                           M ↑ A,                         (3)                                 reshapes downstream audit regions and changes the value of
+denote the set of malicious agents. For a node v → Vt , its                                   subsequent audit points.
+content may be unsafe if it is produced by a malicious agent:                                    Given a candidate set Qt ↑ Vt and an audit-call budget
+                                                                                              Bt , BRA-Audit selects before execution an audit point set
+              a(v) → M =↓ Pr(y(v) = 1) > 0.                                    (4)
+                                                                                                                       St ↑ Q t ,              |St | ↔ Bt .                      (5)
+Here, y(v) = 1 denotes unsafe content. The term malicious
+does not require intentional behavior; it only indicates that                                 Each selected audit point triggers one auditor call over
+an agent produces corrupted information that may mislead                                      its audit-point bounded dependency region. The scheduler
+downstream agents.                                                                            therefore seeks placements that keep audit regions compact
+   A malicious agent may fabricate evidence, omit con-                                        while prioritizing influential nodes and agents that have re-
+straints, produce incorrect intermediate results, distort ag-                                 mained unaudited for many rounds.
+gregation, or trigger unsafe tool usage. These outputs can                                       We formulate audit point placement as minimizing cumu-
+propagate through dependency edges and a"ect later rea-                                       lative unchecked exposure:
+soning or the final result. We therefore study how runtime                                                         min J(St )            s.t.       |St | ↔ Bt ,                 (6)
+auditing detects and contains such propagated failures over                                                       St →Qt
+the execution graph.                                                                          where J(St ) measures the total cumulative exposure remain-
+                                                                                              ing under audit-point placement St . By preventing unchecked
+                                 Method                                                       information from being repeatedly inherited by downstream
+This section formulates budgeted runtime auditing as an op-                                   contexts, this objective jointly reduces audit context size and
+timization problem and develops the mathematical model                                        delayed-detection exposure. Here, Bt controls the number of
+and scheduling algorithm used by BRA-Audit (Fig. 2 shows                                      auditor calls, while total token cost is evaluated end to end.
+overview of BRA-audit).                                                                       We define J(St ) and its components in the next subsection.
+Algorithm 1: BRA: Exposure audit-point Scheduling               available at scheduling time t. We define
+Require: Execution graph Gt = (Vt , Et ), candidate set            AuditGap(u) = (t + 1) ⇒ εt (a(u)),
+    Qt+1 ↑ Vt , audit ratio ω, and last audit records            TopoImpactt (u) = |{u} ⇓ Desct (u)| ,           (7)
+    LastAuditt (·)
+Ensure: Selected audit points St+1 and updated audit                   wt+1|t (u) = AuditGap(u) TopoImpactt (u),
+    records LastAuditt+1 (·)                                       where Desct (u) denotes the strict descendants of u. We
+ 1: Bt+1 ↗ ↘ω|Qt+1 |≃                                           consider verification age because risk can accumulate while
+ 2: St+1 ↗ ⇐                                                    an agent’s outputs remain unchecked, and downstream reach
+ 3: for each node u → Vt do                                     because errors at influential nodes can a"ect more subsequent
+ 4:    AuditGapt (u) ↗ t ⇒ LastAuditt (a(u)) + 1                computations and nodes with broad downstream reachability
+ 5:    TopoImpactt (u) ↗ 1 + |Desct (u)|                        also tend to play more critical roles in the task. Including u
+ 6:    wt (u) ↗ AuditGapt (u) · TopoImpactt (u)                 itself ensures that even sink nodes retain nonzero local im-
+ 7: end for                                                     pact. Accordingly, the first term measures the verification age
+ 8: while |St+1 | < Bt+1 and Qt+1 \ St+1 ⇑= ⇐ do                when the scheduled audit is executed, while the second mea-
+ 9:    for each v → Qt+1 \ St+1 do                              sures the closed downstream region potentially a"ected by
+10:       !(v | St+1 ) ↗ J(St+1 ) ⇒ J(St+1 ⇓ {v})               u. Their product serves as a temporal–topological exposure
+11:    end for                                                  measure, prioritizing nodes with stale verification and broad
+12:    v ω ↗ arg maxv↑Qt+1 \St+1 !(v | St+1 )                   downstream reach using runtime audit records and graph
+13:    St+1 ↗ St+1 ⇓ {v ω }                                     structure.
+14: end while                                                      Let Anct (v) denote the ancestors of v. We write u ↭St v
+15: deploy St+1 before round-(t + 1) execution                  if there exists a directed path p : u ↭ v such that (V (p) \
+16: for each audit point s → St+1 in causal order do            {v}) ⇔ St = ⊋. Given an audit point set St , the unchecked
+17:    T (s) ↗ Region(s | St+1 )                                audit context reaching v is
+18:    r ↗ Auditor(T (s))
+19:    if r = safe then                                             Ctx(v | St ) = {u → Anct (v) ⇓ {v} : u ↭St v} .          (8)
+20:       mark s as a trusted audit point for downstream ex-    Equivalently, it is obtained by traversing backward from v
+          ecution in this round                                 and stopping each branch at the first selected audit point.
+21:    else                                                     This definition preserves unresolved branches in a DAG: if
+22:       block the a"ected downstream information flow         any path from u to v bypasses the selected audit points, u
+23:       rollback and recover the work products a"ected by     remains in the audit context. Thus, an audit point shortens
+          T (s)                                                 only the downstream contexts whose information flow passes
+24:       re-execute and re-audit T (s) before continuing       through it.
+25:    end if                                                      All audit points are selected before execution and triggered
+26:    update LastAuditt+1 (a(s))                               in causal order. Once an audit point passes the audit, its output
+27: end for                                                     becomes trusted input for downstream execution; an unsafe
+28: return St+1 , LastAuditt+1 (·)                              region is blocked and recovered before execution continues.
+                                                                   The cumulative exposure of v and the total exposure are
+                                                                                                  !
+                                                                               C(v | St ) =               wt (u),
+Analysis and Solution                                                                         u↑Ctx(v|St )
+                                                                                                                             (9)
+                                                                                              !
+                                                                                   J(St ) =          C(v | St ).
+We now analyze the cumulative-exposure objective and de-                                      v↑Vt
+rive the audit-point scheduling rule used by BRA-Audit. Al-     A high-exposure node can repeatedly contribute to down-
+gorithm 1 summarizes the main procedure of BRA-Audit.           stream contexts until bounded by an audit point, increasing
+The key observation is that an unchecked node does not          the audit burden and the cost of delayed detection. By sum-
+only a"ect its own audit context. Its exposure can continue     ming over all nodes, J(St ) captures both the size of local
+to appear in downstream dependency contexts until the cor-      audit contexts and the repeated inheritance of unchecked ex-
+responding information flow reaches an audit point. Audit       posure by downstream computation.
+scheduling therefore considers how an audit point jointly          Directly minimizing J(St ) is combinatorial, and audit
+reduces exposure in multiple downstream contexts.               point decisions are coupled because each selected audit point
+  Since runtime objects are ordered by their generation times   changes downstream contexts and the value of later selec-
+and dependency edges follow causal information flow, re-        tions. BRA-Audit therefore greedily selects audit points by
+peated agent interactions are unrolled across rounds, and the   marginal gain.
+runtime dependency graph Gt is represented as a directed           For a candidate v → Vt \ St , let Cutv (z | St ) denote the
+acyclic graph.                                                  exposure removed from the context of z:
+  For each node u → Vt , let a(u) denote its producing agent,               Cutv (z | St ) = Ctx(z | St )
+and let εt (a) be the latest completed audit round of agent a                                                               (10)
+                                                                                             \ Ctx(z | St ⇓ {v}).
+               Table 1: Performance and token cost on AgentsNet. Token consumption is reported in thousands (K).
+
+                               Consensus            Leader           Matching        Coloring       VertexCover        Overall
+      Method                  Score    Tok.      Score    Tok.   Score     Tok.    Score    Tok.    Score    Tok.    Score    Tok.
+      Clean                  0.9630    28.1      0.5926   29.9   0.6944    25.7   0.9967    31.1    0.8342   18.6    0.8162   26.7
+      Attack                 0.0741    42.2      0.1481   43.1   0.4815    35.7   0.8324    47.5    0.6676   29.0    0.4407   39.5
+      PeerGuard              0.9630    69.3      0.5556   67.5   0.8056    68.1   0.9716    70.4    0.8852   53.6    0.8362   65.8
+      AuditAgent             0.8148    48.6      0.4444   50.2   0.6250    49.1   0.9013    53.9    0.7854   40.3    0.7142   48.4
+      GuardAgent             0.4074    44.7      0.3704   46.5   0.5370    39.3   0.8548    50.2    0.7014   33.4    0.5742   42.8
+      TrinityGuard           0.8889    58.0      0.4815   55.6   0.7385    51.8   0.8892    64.8    0.8156   44.9    0.7627   55.0
+      Multi-Agent Debate     1.0000    75.4      0.6296   74.5   0.8342    77.3   0.9967    81.6    0.8675   71.5    0.8656   76.1
+      BRA-Audit              0.9630    57.6      0.5185   57.0   0.7917    52.4   0.9967    61.7    0.8342   43.8    0.8208   54.5
+
+
+
+The marginal gain of v is                                                    Here, Region(s | St+1 ) is obtained by traversing back-
+           !(v | St ) = J(St ) ⇒ J(St ⇓ {v})                              ward from s and stopping each branch at the first upstream
+                        !        !                                        audit point in St+1 . The audit point outputs are treated as
+                      =                 wt (u).              (11)         trusted inputs, while the subsequent inputs, outputs, mes-
+                           z↑Vt u↑Cutv (z|St )                            sages, and dependency steps form the local audit region.
+This quantity measures the exposure removed from all de-                     If the auditor judges T (s | St+1 ) as safe, s becomes a
+pendency contexts by adding v. It is large when v separates               trusted audit point; otherwise, the system rolls back the work
+a high-exposure region from many downstream contexts.                     products a"ected by this region. By partitioning execution
+Since marginal gains are recomputed after each selection,                 into audit-point bounded regions, BRA-Audit shortens audit
+the scheduler accounts for overlapping e"ects among audit                 contexts and localizes rollback. Because the auditor examines
+points rather than scoring them independently. For a chain,               the entire region rather than only its endpoint, an unsafe agent
+the expression reduces to the accumulated prefix exposure                 can still be detected even when it is not selected as an audit
+multiplied by the number of a"ected downstream contexts,                  point, provided that its inputs or outputs appear in the region
+as illustrated in the technical appendix.                                 of an downstream audit point.
+   At each step, BRA-Audit selects
+                                                                                                   Experiment
+                 v ω = arg max !(v | St ),                   (12)
+                            v↑Vt \St                                      We evaluate BRA-Audit against recent LLM-agent auditing
+adds v ω to St , and updates the a"ected contexts until the               and multi-agent defense methods, focusing on defense ef-
+audit budget is exhausted.                                                fectiveness, audit cost, and robustness. Our experiments are
+                                                                          designed to answer three research questions:
+Online audit-point Placement and Audit Execution                             RQ1: Defense-Cost Trade-o!. Can BRA-Audit achieve
+BRA-Audit operates in an online manner. At the end of each                e"ective auditing while keeping the audit overhead low?
+MAS interaction round t, the system updates the dependency                   RQ2: Robustness Across Settings. How stable is BRA-
+graph Gt = (Vt , Et ). Before the next round starts, the sched-           Audit under di"erent graph topologies, node importance dis-
+uler uses this graph to place a limited number of audit points.           tributions, attack locations, and backbone auditor models?
+Let Qt+1 ↑ Vt denote the candidate nodes for the next audit                  RQ3: Budget and Component Analysis. How do audit
+round. Given an audit ratio ω → (0, 1], which corresponds                 budget, audit point placement strategy, and exposure-weight
+to auditing k% of the candidates, the audit budget and audit              components a"ect the overall performance of BRA-Audit?
+point set are defined as
+Bt+1 = ↘ω|Qt+1 |≃ ,         St+1 ↖ arg            min        J(S).        Experimental Setup.
+                                         S→Qt+1 , |S|↓Bt+1
+                                                                          Dataset. We evaluate BRA-Audit on three complementary
+                                                           (13)           settings. First, we use AgentsNet (Grötschla et al. 2025),
+Here, J(S) is the cumulative unaudited exposure objective                 a multi-agent coordination benchmark with five graph-
+defined above. In practice, BRA-Audit selects audit points                theoretic task and configurable communication topologies
+that provide the largest reduction of J(S) until the budget is            and node counts. This setting tests auditing under controlled
+used. In the final round, the agent producing the final result            multi-round agent communication. Second, we use BIG-
+is mandatorily selected and counted toward the budget.                    Bench Hard (BBH) (Suzgun et al. 2022) to evaluate com-
+   After the audit-point set St+1 is selected, each audit point           plex logical reasoning; we randomly sample 150 questions
+is assigned to an auditor. For an audit point s → St+1 , the              and convert each instance into a multi-agent reasoning work-
+auditor inspects the audit-point bounded dependency region                flow. Third, we use the Research scenario from MultiAgent-
+accumulated along all incoming branches:                                  Bench (Zhu et al. 2025), an open-ended multi-agent task
+               T (s | St+1 ) = Region(s | St+1 ).            (14)         where agents collaborate to generate research ideas.
+                         Table 2: Performance and token cost on BBH and Multi-agent-bench-rasearch.
+
+                                         BBH                                     MultiAgentBench-Research
+             Method            Acc      recovery    token    innovation     safety feasibility Score recovery      token(K)
+              clean           0.9200        –        5355       5.00         4.62      3.83    0.897      –          23.0
+             attack           0.3933        –        6778       2.28         1.88      1.50    0.377      –          29.1
+          PeerGuard           0.8867     0.4933     10136       4.96         4.80      3.86    0.908    0.531        47.3
+          Auditagent          0.8067     0.4133      7459       3.88         3.92      3.14    0.730    0.352        32.4
+          Guardagent          0.5200     0.1267      7318       3.20         2.74      2.88    0.588    0.211        30.8
+         Trinityguard         0.8600     0.4667      8324       4.32         4.16      3.64    0.808    0.431        37.9
+       Multi-Agent Debate     0.9333      0.54      13763       4.98         4.86      4.02    0.925    0.548        60.5
+              BRA             0.8600     0.4667      8175       5.00         4.74      3.78    0.902    0.525        38.5
+
+              Table 3: Backbone model ablation on AgentsNet. Token consumption is reported in thousands (K).
+
+                            Consensus          Leader           Matching           Coloring      VertexCover       Overall
+      Model                Score    Tok.    Score    Tok.     Score    Tok.      Score    Tok.   Score    Tok.   Score    Tok.
+      Qwen                 0.9630   57.6   0.5185     57.0   0.7917       52.4   0.9967   61.7   0.8342   43.8   0.8208   54.5
+      DeepSeekV4-Flash     0.9630   51.0   0.5556     72.9   0.6435       64.2   0.9463   51.3   0.8250   44.6   0.7867   56.8
+      MiniMax-2.7          0.9259   55.8   0.5185     63.4   0.7592       51.3   0.9177   55.4   0.7935   35.6   0.7830   52.3
+      GLM-5.1              0.9259   62.9   0.5926     63.2   0.7314       56.8   0.9446   61.0   0.8250   53.1   0.8039   59.4
+      GPT-5                0.9630   78.5   0.6296     79.8   0.8333       81.7   0.9534   75.9   0.8956   65.1   0.8550   76.2
+      Gemini3-Flash        0.8889   48.7   0.5556     51.5   0.7963       50.1   0.9265   53.7   0.8342   40.2   0.8003   48.8
+
+
+
+Settings. We implement all multi-agent systems with Au-               tack, a relative drop of approximately 46.0%. This supports
+toGen (Wu et al. 2023), and instantiate agent networks with           auditing MAS collaboration is necessary.
+di"erent sizes and communication topologies. In each set-                On AgentsNet (Table 1), BRA-Audit restores the overall
+ting, 20% of the agents is designated as malicious and is             score to 0.8208 with 54.5K tokens. It outperforms AuditA-
+instructed to inject incorrect claims, misleading evidence,           gent, GuardAgent, and TrinityGuard, and matches the clean
+or corrupted intermediate results into the collaboration pro-         results on Consensus, Coloring, and VertexCover. Although
+cess to make the task fail (detailed attack recovery proto-           PeerGuard and Multi-Agent Debate achieve slightly higher
+col is provided in technical supplement). We mainly use               scores, BRA-Audit uses 17.2% and 28.4% fewer tokens, re-
+Qwen3-235B-A22B-Instruct-2507 model. We further evalu-                spectively. A similar defense–cost trade-o" appears on BBH
+ate di"erent backbone models, graph topologies, numbers of            and MultiAgentBench-Research (Table 2). BRA-Audit im-
+agents, and audit budgets ω. The main metrics are task score          proves BBH accuracy from 0.3933 to 0.8600, using 19.3%
+and total E2E token consumption, which can measure de-                fewer tokens than PeerGuard and 40.6% fewer than Multi-
+fense e"ectiveness and cost. Each configuration is repeated           Agent Debate. On Research, it reaches 0.902 with 38.5K
+three times, with the standard deviation kept below 2%.               tokens, close to both baselines while reducing token usage
+                                                                      by 18.5% and 36.3%, respectively. Overall, BRA-Audit bal-
+Main Results.                                                         ances defense e"ectiveness and runtime cost across struc-
+We compare BRA-Audit with five representative LLM-based               tured and open-ended tasks.
+methods for runtime auditing or reliability enhancement.
+PeerGuard performs peer-based inspection during agent in-             Ablation Study
+teractions (Fan and Li 2025). AuditAgent is a round-level
+auditing baseline adapted from AgentAuditor (Yang et al.              Backbone Model Ablation. We evaluate BRA-Audit with
+2026). GuardAgent converts scenario-specific guard require-           six backbone models on AgentsNet benchmark to study its
+ments into executable checks (Xiang et al. 2024). Trinity-            sensitivity to model capability(as shown in Table 3.) Overall
+Guard uses preassigned runtime monitors to inspect MAS                scores range from 0.7830 to 0.8550, indicating stable behav-
+execution (Wang et al. 2026). Multi-Agent Debate im-                  ior across all tested models. GPT-5 obtains the highest score
+proves output reliability through iterative discussion among          of 0.8550, but also incurs the largest token cost at 76.2K.
+agents (Du et al. 2024). All methods use the same attack              Qwen o"ers a better performance–cost balance, reaching
+settings and backbone models.                                         0.8208 with 54.5K tokens. Gemini-3 uses the fewest to-
+   The attack results confirm that LLM-MAS is vulnerable              kens (48.8K) while maintaining a score of 0.8003. GLM-5.1,
+to a small number of corrupted agents. Even one or two ma-            DeepSeek-V4, and MiniMax-2.7 achieve 0.8039, 0.7867, and
+licious or hallucinating agents can propagate faulty outputs          0.7830, respectively. Performance di"erences are most vis-
+through communication and aggregation, substantially de-              ible on Leader and Matching. Overall, BRA-Audit remains
+grading task performance. On AgentsNet, the overall score             e"ective across di"erent backbones, while stronger models
+falls from 0.8162 in the clean setting to 0.4407 under at-            tend to improve task performance at higher token cost.
+                          Table 4: Agent-count and topology ablations. Each entry reports Score / Avg. Token (K).
+                             (a) Number of Agents                                                 (b) Graph Topology
+
+#Agents                Clean              Attack               BRA-Audit      Topology         Clean               Attack           BRA-Audit
+     4                0.859 / 8.3       0.363 / 14.1           0.837 / 18.9     WS          0.803 / 26.2         0.451 / 38.5       0.846 / 55.6
+     8               0.827 / 21.3       0.520 / 33.4           0.847 / 41.9     BA          0.835 / 25.2         0.415 / 38.1       0.813 / 47.8
+    16               0.763 / 50.4       0.439 / 71.0          0.778 / 102.8     DT          0.811 / 28.7         0.456 / 42.0       0.804 / 60.1
+Overall              0.816 / 26.7       0.441 / 39.5           0.821 / 54.5   Overall       0.816 / 26.7         0.441 / 39.5       0.821 / 54.5
+
+
+Table 5: Audit-budget ablation with audit and rollback costs.                  Table 6: False-positive results under di"erent audit ratios.
+All token costs are reported in thousands (K).
+                                                                                                  BBH                            Research
+                             BBH                        Research
+                                                                               ω          FP               FPR              FP              FPR
+ω            Score Audit Rollback Total Score Audit Rollback Total
+                                                                              0.2         0              0.00%               0           0.00%
+0.2          0.760    0.74     2.84    6.90   0.757   2.24    13.14   33.2
+0.4, Rand.   0.820    2.14     1.76   8.01    0.821   5.43    9.13    37.4    0.4         7              4.67%               6           6.00%
+0.4, BRA     0.860    2.09     1.81   8.18    0.902   5.82    9.38    38.5    1.0         18            12.00%              16          16.00%
+0.6          0.873    3.91     1.35    9.57   0.906   9.11     7.17   42.9
+1.0          0.893    5.57     0.94   11.31   0.897   11.13    5.64   46.8
+
+                                                                              e"ective across diverse communication topologies.
+Audit-Budget Ablation. We vary the audit ratio ω on BBH                       False-Positive Analysis. We assess false positives on clean
+and MultiAgentBench-Research to study the defense–cost                        BBH and MultiAgentBench-Research at varying audit ratios
+trade-o". On BBH, increasing ω from 0.2 to 0.4 improves                       (Table 6). No FP occur at ω = 0.2. At ω = 0.4, FP rates are
+the score from 0.760 to 0.860, while total token consump-                     4.67%/6.00% for BBH/Research, rising to 12.00%/16.00%
+tion rises from 6.9 to 8.18. Larger budgets of 0.6 and 1.0                    under full auditing. Thus, excessive auditing can introduce
+further increase the score to 0.873 and 0.893, but require                    unnecessary errors on benign trajectories. Most executions
+9.57 and 11.31K tokens. MultiAgentBench-Research shows                        contain neither attacks nor severe hallucinations, so auditing
+a similar trend: ω = 0.4 achieves 0.902 with 38.5K tokens,                    every interaction incurs substantial redundant cost. Along-
+close to the best score of 0.906 at ω = 0.6. As ω increases, au-              side task performance, BRA-Audit at ω = 0.4 empirically
+dit cost grows while rollback cost decreases, indicating that                 lies on a favorable Pareto frontier balancing defense e"ec-
+more frequent auditing detects failures earlier and reduces                   tiveness, FP risk, and token consumption.
+re-execution. Under the same budget ω = 0.4, BRA-Audit
+outperforms random audit-point placement by 0.040 on BBH                      Weight-Component Ablation. We further ablate the two
+and 0.081 on Research with comparable token costs. Overall,                   components of the exposure weight. Removing AuditAge
+ω = 0.4 provides a favorable balance among audit e"ective-                    decreases the overall score from 0.821 to 0.758, while re-
+ness, audit cost, and rollback overhead.                                      moving ClosedImpact reduces it to 0.793. Both variants
+                                                                              also increase total token consumption, showing that veri-
+Node-Count Ablation. We evaluate BRA-Audit on                                 fication staleness and closed downstream influence jointly
+AgentsNet graphs with 4, 8, and 16 agents (Table 4a). It                      improve audit-point selection. Detailed results and analysis
+achieves scores of 0.8370, 0.8473, and 0.7781, improving                      are provided in the technical supplement.
+over the attacked setting by 0.4737, 0.3274, and 0.3391, re-
+spectively. Token consumption rises from 18.9K to 41.9K                                                Conclusion
+and 102.8K as larger graphs introduce longer communica-
+tion paths and audit contexts. BRA-Audit therefore remains                    In this paper, we presented BRA-Audit, a cost-aware runtime
+e"ective as the system scales, although larger networks re-                   defense for LLM MAS. It models MAS communication as
+quire substantially more auditing resources.                                  a dependency graph and formulates auditing as cumulative-
+                                                                              exposure audit point placement. By combining audit gaps
+Topology Ablation. We evaluate Watts–Strogatz,                                with topological impact, BRA-Audit selects limited audit
+Barabási–Albert, and Delaunay graphs, which represent                         points in long-unaudited and influential regions, shortens
+clustered small-world, hub-dominated, and spatially local                     audit contexts, limits unchecked propagation, and localizes
+communication structures, respectively (Grötschla et al.                      rollback. Experimental results on structured coordination,
+2025). As shown in Table 4b, BRA-Audit obtains scores of                      complex reasoning, and open-ended tasks support a favorable
+0.8458, 0.8127, and 0.8040, compared with attacked scores                     balance between task recovery and token cost. demonstrates a
+of 0.4511, 0.4153, and 0.4558. The small-world graph                          favorable Pareto-optimal trade-o" between task performance
+achieves the best score, while the preferential-attachment                    and auditing cost. We believe BRA-Audit can contribute to
+graph uses the fewest tokens. Overall, BRA-Audit remains                      the development of more trustworthy and cost-aware MAS.
+                       References                                for “Mind” Exploration of Large Language Model Society.
+Cemri, M.; Pan, M. Z.; Yang, S.; Agrawal, L. A.; Chopra,         In Advances in Neural Information Processing Systems, vol-
+B.; Tiwari, R.; Keutzer, K.; Parameswaran, A.; Klein, D.;        ume 36, 51991–52008.
+Ramchandran, K.; Zaharia, M.; Gonzalez, J. E.; and Stoica, I.    Li, X.; Wang, S.; Zeng, S.; Wu, Y.; and Yang, Y. 2024. A
+2025. Why Do Multi-Agent LLM Systems Fail? In Advances           survey on LLM-based multi-agent systems: workflow, infras-
+in Neural Information Processing Systems.                        tructure, and challenges. Vicinagearth, 1(1): 9.
+Chan, C.-M.; Chen, W.; Su, Y.; Yu, J.; Xue, W.; Zhang, S.; Fu,   Liu, N. F.; Lin, K.; Hewitt, J.; Paranjape, A.; Bevilacqua, M.;
+J.; and Liu, Z. 2024. ChatEval: Towards Better LLM-based         Petroni, F.; and Liang, P. 2024. Lost in the Middle: How
+Evaluators through Multi-Agent Debate. In The Twelfth In-        Language Models Use Long Contexts. Transactions of the
+ternational Conference on Learning Representations.              Association for Computational Linguistics, 12: 157–173.
+Du, Y.; Li, S.; Torralba, A.; Tenenbaum, J. B.; and Mordatch,
+                                                                 Miao, R.; Liu, Y.; Wang, Y.; Shen, X.; Tan, Y.; Dai, Y.; Pan,
+I. 2024. Improving Factuality and Reasoning in Language
+                                                                 S.; and Wang, X. 2026. BlindGuard: Safeguarding LLM-
+Models through Multiagent Debate. In Proceedings of the
+                                                                 based Multi-Agent Systems under Unknown Attacks. In Pro-
+41st International Conference on Machine Learning, volume
+                                                                 ceedings of the 64th Annual Meeting of the Association for
+235 of Proceedings of Machine Learning Research, 11733–
+                                                                 Computational Linguistics (Volume 1: Long Papers), 39215–
+11763. PMLR.
+                                                                 39234. San Diego, California, United States: Association for
+Fan, F.; and Li, X. 2025. PeerGuard: Defending Multi-Agent       Computational Linguistics.
+Systems Against Backdoor Attacks Through Mutual Reason-
+ing. arXiv preprint arXiv:2505.11642.                            Qian, C.; Liu, W.; Liu, H.; Chen, N.; Dang, Y.; Li, J.; Yang,
+                                                                 C.; Chen, W.; Su, Y.; Cong, X.; Xu, J.; Li, D.; Liu, Z.;
+Fourney, A.; Bansal, G.; Mozannar, H.; Tan, C.; Salinas,
+                                                                 and Sun, M. 2024. ChatDev: Communicative Agents for
+E.; Erkang; Zhu; Niedtner, F.; Proebsting, G.; Bassman, G.;
+                                                                 Software Development. In Proceedings of the 62nd Annual
+Gerrits, J.; Alber, J.; Chang, P.; Loynd, R.; West, R.; Dibia,
+                                                                 Meeting of the Association for Computational Linguistics
+V.; Awadallah, A.; Kamar, E.; Hosn, R.; and Amershi, S.
+                                                                 (Volume 1: Long Papers), 15174–15186. Bangkok, Thailand:
+2024. Magentic-One: A Generalist Multi-Agent System for
+                                                                 Association for Computational Linguistics.
+Solving Complex Tasks. arXiv:2411.04468.
+Grötschla, F.; Müller, L.; Tönsho", J.; Galkin, M.; and Per-     Renze, M.; and Guven, E. 2024. Self-Reflection in LLM
+ozzi, B. 2025. AgentsNet: Coordination and Collaborative         Agents: E"ects on Problem-Solving Performance. arXiv
+Reasoning in Multi-Agent LLMs. arXiv:2507.08616.                 preprint arXiv:2405.06682.
+Gu, J.; Jiang, X.; Shi, Z.; Tan, H.; Zhai, X.; Xu, C.; Li, W.;   Shinn, N.; Cassano, F.; Gopinath, A.; Narasimhan, K.; and
+Shen, Y.; Ma, S.; Liu, H.; Wang, S.; Zhang, K.; Wang, Y.;        Yao, S. 2023. Reflexion: Language agents with verbal re-
+Gao, W.; Ni, L.; and Guo, J. 2025. A Survey on LLM-as-a-         inforcement learning. Advances in neural information pro-
+Judge. arXiv:2411.15594.                                         cessing systems, 36: 8634–8652.
+Guo, T.; Chen, X.; Wang, Y.; Chang, R.; Pei, S.; Chawla,         Suzgun, M.; Scales, N.; Schärli, N.; Gehrmann, S.; Tay,
+N. V.; Wiest, O.; and Zhang, X. 2024. Large language model       Y.; Chung, H. W.; Chowdhery, A.; Le, Q. V.; Chi, E. H.;
+based multi-agents: A survey of progress and challenges.         Zhou, D.; and Wei, J. 2022. Challenging BIG-Bench
+arXiv preprint arXiv:2402.01680.                                 Tasks and Whether Chain-of-Thought Can Solve Them.
+He, P.; Lin, Y.; Dong, S.; Xu, H.; Xing, Y.; and Liu, H. 2025.   arXiv:2210.09261.
+Red-Teaming LLM Multi-Agent Systems via Communica-               Tran, K.-T.; Dao, D.; Nguyen, M.-D.; Pham, Q.-V.;
+tion Attacks. In Findings of the Association for Computa-        O’Sullivan, B.; and Nguyen, H. D. 2025. Multi-Agent Col-
+tional Linguistics: ACL 2025, 6726–6747. Vienna, Austria:        laboration Mechanisms: A Survey of LLMs. arXiv preprint
+Association for Computational Linguistics.                       arXiv:2501.06322.
+Hong, S.; Zhuge, M.; Chen, J.; Zheng, X.; Cheng, Y.; Zhang,      Triedman, H.; Jha, R.; and Shmatikov, V. 2025. Multi-Agent
+C.; Wang, J.; Wang, Z.; Yau, S. K. S.; Lin, Z.; Zhou, L.; Ran,   Systems Execute Arbitrary Malicious Code. arXiv preprint
+C.; Xiao, L.; Wu, C.; and Schmidhuber, J. 2024. MetaGPT:         arXiv:2503.12188.
+Meta Programming for a Multi-Agent Collaborative Frame-
+work. In The Twelfth International Conference on Learning        Wang, J.; Wang, J.; Athiwaratkun, B.; Zhang, C.; and Zou, J.
+Representations.                                                 2024. Mixture-of-Agents Enhances Large Language Model
+Ju, T.; Wang, Y.; Ma, X.; Cheng, P.; Zhao, H.; Wang, Y.;         Capabilities. arXiv:2406.04692.
+Liu, L.; Xie, J.; Zhang, Z.; and Liu, G. 2024. Flooding          Wang, K.; Zeng, B.; Wei, Z.; Jin, C.; Zhou, H.; Li, X.; Yang,
+Spread of Manipulated Knowledge in LLM-Based Multi-              C.; Qu, J.; Xu, X.; and Hu, X. 2026. TrinityGuard: A Unified
+Agent Communities. arXiv preprint arXiv:2407.07791.              Framework for Safeguarding Multi-Agent Systems. arXiv
+Lee, D.; and Tiwari, M. 2024. Prompt Infection: LLM-to-          preprint arXiv:2603.15408.
+LLM Prompt Injection within Multi-Agent Systems. arXiv           Wang, L.; Wang, W.; Wang, S.; Li, Z.; Ji, Z.; Lyu, Z.; Wu,
+preprint arXiv:2410.07283.                                       D.; and Cheung, S.-C. 2025a. IP Leakage Attacks Tar-
+Li, G.; Hammoud, H. A. A. K.; Itani, H.; Khizbullin, D.;         geting LLM-Based Multi-Agent Systems. arXiv preprint
+and Ghanem, B. 2023. CAMEL: Communicative Agents                 arXiv:2505.12442.
+Wang, S.; Zhang, G.; Yu, M.; Wan, G.; Meng, F.; Guo, C.;
+Wang, K.; and Wang, Y. 2025b. G-Safeguard: A Topology-
+Guided Security Lens and Treatment on LLM-based Multi-
+agent Systems. In Proceedings of the 63rd Annual Meeting
+of the Association for Computational Linguistics (Volume 1:
+Long Papers), 7261–7276. Vienna, Austria: Association for
+Computational Linguistics.
+Wu, Q.; Bansal, G.; Zhang, J.; Wu, Y.; Li, B.; Zhu, E.; Jiang,
+L.; Zhang, X.; Zhang, S.; Liu, J.; et al. 2023. AutoGen: En-
+abling Next-Gen LLM Applications via Multi-Agent Con-
+versation. arXiv preprint arXiv:2308.08155.
+Xia, Y.; Gao, A.; Quan, Y.; Liu, Z.; and Fang, M. 2026.
+Who Broke the System? Failure Localization in LLM-Based
+Multi-Agent Systems. arXiv preprint arXiv:2607.07989. To
+appear in the Conference on Language Modeling.
+Xiang, Z.; Zheng, L.; Li, Y.; Hong, J.; Li, Q.; Xie, H.;
+Zhang, J.; Xiong, Z.; Xie, C.; Yang, C.; Song, D.; and Li,
+B. 2024. GuardAgent: Safeguard LLM Agents by a Guard
+Agent via Knowledge-Enabled Reasoning. arXiv preprint
+arXiv:2406.09187.
+Xie, Y.; Zhu, C.; Zhang, X.; Zhu, T.; Ye, D.; Wang, M.; and
+Liu, C. 2025. Who’s the Mole? Modeling and Detecting
+Intention-Hiding Malicious Agents in LLM-Based Multi-
+Agent Systems. arXiv preprint arXiv:2507.04724.
+Yan, B.; Zhou, Z.; Zhang, L.; Zhang, L.; Zhou, Z.; Miao,
+D.; Li, Z.; Li, C.; and Zhang, X. 2026. Beyond Self-Talk: A
+Communication-Centric Survey of LLM-Based Multi-Agent
+Systems. Frontiers of Computer Science.
+Yang, W.; Li, S.; Ping, H.; Zhang, P.; Bogdan, P.; and
+Thomason, J. 2026. Auditing Multi-Agent LLM Reason-
+ing Trees Outperforms Majority Vote and LLM-as-Judge.
+arXiv preprint arXiv:2602.09341.
+Zhang, G.; Yue, Y.; Li, Z.; Yun, S.; Wan, G.; Wang, K.;
+Cheng, D.; Yu, J. X.; and Chen, T. 2024. Cut the Crap: An
+Economical Communication Pipeline for LLM-based Multi-
+Agent Systems. arXiv:2410.02506.
+Zheng, C.; Cao, Y.; Dong, X.; and He, T. 2025. Demon-
+strations of Integrity Attacks in Multi-Agent Systems. arXiv
+preprint arXiv:2506.04572.
+Zheng, L.; Chiang, W.-L.; Sheng, Y.; Zhuang, S.; Wu, Z.;
+Zhuang, Y.; Lin, Z.; Li, Z.; Li, D.; Xing, E. P.; Zhang, H.;
+Gonzalez, J. E.; and Stoica, I. 2023. Judging LLM-as-a-Judge
+with MT-Bench and Chatbot Arena. arXiv:2306.05685.
+Zhu, K.; Du, H.; Hong, Z.; Yang, X.; Guo, S.; Wang, Z.;
+Wang, Z.; Qian, C.; Tang, X.; Ji, H.; and You, J. 2025. Multi-
+AgentBench: Evaluating the Collaboration and Competition
+of LLM agents. arXiv:2503.01935.
+

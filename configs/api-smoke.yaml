@@ -1,0 +1,22 @@
+default_model: api
+models:
+  api:
+    backend: api
+    model: Qwen/Qwen3-235B-A22B-Instruct-2507
+    base_url: https://YOUR-PROVIDER/v1
+    api_key_env: BRA_API_KEY
+    timeout: 180
+    retries: 3
+experiment:
+  agents: 5
+  rounds: 1
+  topology: chain
+  malicious_fraction: 0.2
+  max_tokens: 256
+  audit_max_tokens: 256
+  max_recovery_attempts: 1
+  seeds: [42]
+data:
+  bbh: data/bbh150.jsonl
+conditions:
+  - {name: rho04_bra, ratio: 0.4, strategy: bra}

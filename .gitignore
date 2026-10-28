@@ -1,0 +1,10 @@
+.conda/
+.cache/
+__pycache__/
+*.egg-info/
+.pytest_cache/
+.env
+models/
+logs/*
+results/*
+!results/.gitkeep
